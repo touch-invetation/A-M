@@ -390,12 +390,8 @@
         <i id="musicIcon" class="bi bi-volume-mute-fill"></i>
     </button>
 
-    <!-- مشغل يوتيوب مخفي للموسيقى: يبدأ مباشرة (صامت) أول ما تنفتح الصفحة، ويرتفع الصوت أول لمسة -->
-    <div style="position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none;" aria-hidden="true">
-        <iframe id="youtubeAudio" width="200" height="200"
-            src="https://www.youtube.com/embed/qNvJnYLaT5s?enablejsapi=1&autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=qNvJnYLaT5s"
-            allow="autoplay; encrypted-media"></iframe>
-    </div>
+    <!-- الموسيقى: ملف mp3 بنفس مجلد الموقع (لازم اسمه music.mp3) -->
+    <audio id="bgMusic" src="music.mp3" loop preload="auto" playsinline muted></audio>
 
     <!-- نافذة تأكيد الحضور (RSVP Modal) -->
     <div class="modal fade" id="rsvpModal" tabindex="-1" aria-hidden="true">
@@ -488,55 +484,52 @@
     }
 
     // تشغيل وإيقاف الموسيقى مع تحديث الموجات الصوتية
-    function ytCmd(func, args) {
-        const ytIframe = document.getElementById('youtubeAudio');
-        if (ytIframe && ytIframe.contentWindow) {
-            ytIframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: func, args: args || '' }), '*');
-        }
-    }
+    const bgMusic = document.getElementById('bgMusic');
+    let userPaused = false;
 
-    function playYouTubeAudio() {
+    function syncMusicUI(playing) {
         const icon = document.getElementById('musicIcon');
         const eq = document.getElementById('musicEqualizer');
-        ytCmd('unMute');
-        ytCmd('setVolume', [100]);
-        ytCmd('playVideo');
-        isMusicPlaying = true;
-        if (icon) icon.className = 'bi bi-music-note-beamed';
-        if (eq) eq.classList.remove('paused-eq');
+        isMusicPlaying = playing;
+        if (icon) icon.className = playing ? 'bi bi-music-note-beamed' : 'bi bi-volume-mute-fill';
+        if (eq) eq.classList.toggle('paused-eq', !playing);
     }
 
-    // المتصفحات بتمنع الصوت التلقائي قبل أي لمسة، فالموسيقى بتبدأ صامتة أول ما تنفتح الصفحة
-    // وأول لمسة/سحب/ضغطة بأي مكان بترفع الصوت فوراً
-    (function () {
-        let unlocked = false;
-        const evts = ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown', 'wheel', 'scroll'];
-        function unlock(e) {
-            if (unlocked) return;
-            if (e && e.target && e.target.closest && e.target.closest('#musicToggleBtn')) return; // زر الموسيقى له شغله
-            unlocked = true;
-            evts.forEach(n => window.removeEventListener(n, unlock, true));
-            playYouTubeAudio();
+    function playYouTubeAudio() {            // الاسم القديم محفوظ عشان باقي الكود يشتغل
+        if (!bgMusic) return;
+        userPaused = false;
+        bgMusic.muted = false;
+        bgMusic.volume = 1;
+        const pr = bgMusic.play();
+        if (pr && pr.then) {
+            pr.then(() => syncMusicUI(true)).catch(() => syncMusicUI(false));
+        } else {
+            syncMusicUI(true);
         }
-        evts.forEach(n => window.addEventListener(n, unlock, { capture: true, passive: true }));
-        // لو المستخدم ضغط زر الموسيقى أول شي، ما نتدخل بعدها
-        document.addEventListener('DOMContentLoaded', function () {
-            const b = document.getElementById('musicToggleBtn');
-            if (b) b.addEventListener('click', function () {
-                unlocked = true;
-                evts.forEach(n => window.removeEventListener(n, unlock, true));
-            });
-        });
-    })();
+    }
 
     function pauseYouTubeAudio() {
-        const icon = document.getElementById('musicIcon');
-        const eq = document.getElementById('musicEqualizer');
-        ytCmd('pauseVideo');
-        isMusicPlaying = false;
-        if (icon) icon.className = 'bi bi-volume-mute-fill';
-        if (eq) eq.classList.add('paused-eq');
+        if (!bgMusic) return;
+        userPaused = true;
+        bgMusic.pause();
+        syncMusicUI(false);
     }
+
+    // أول ما تنفتح الصفحة: نجرّب تشغيل (صامت). المتصفح بيسمح بالصامت غالباً.
+    document.addEventListener('DOMContentLoaded', function () {
+        if (bgMusic) { const p = bgMusic.play(); if (p && p.catch) p.catch(() => {}); }
+    });
+
+    // أول ضغطة حقيقية بأي مكان: نفتح الصوت. بنعيد المحاولة لين يشتغل فعلاً.
+    (function () {
+        function unlock(e) {
+            if (userPaused || !bgMusic) return;
+            if (e && e.target && e.target.closest && e.target.closest('#musicToggleBtn')) return;
+            if (!bgMusic.paused && !bgMusic.muted) return;   // شغّال وبصوت
+            playYouTubeAudio();
+        }
+        ['click', 'touchend'].forEach(n => window.addEventListener(n, unlock, { capture: true, passive: true }));
+    })();
 
     function toggleMusic() {
         if (isMusicPlaying) {
