@@ -614,39 +614,88 @@
     // التمرير التلقائي السلس مع الإيقاف الذكي عند تدخل المستخدم
     let animationFrameId = null;
     let isAutoScrolling = false;
-    let scrollSpeed = 1.8; // سرعة التمرير
+    const scrollSpeedPxPerSec = 100;   // سرعة التمرير (بكسل بالثانية) — ثابتة على كل الأجهزة
+    let scrollPos = 0, lastTs = 0;
 
-    function step() {
+    function pageBottom() {
+        return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
+    }
+
+    function step(ts) {
         if (!isAutoScrolling) return;
+        if (!lastTs) lastTs = ts;
+        const dt = Math.min(ts - lastTs, 100);   // نتجاهل القفزات لو الصفحة تجمّدت لحظة
+        lastTs = ts;
 
-        window.scrollBy(0, scrollSpeed);
+        scrollPos += scrollSpeedPxPerSec * dt / 1000;
+        window.scrollTo(0, Math.round(scrollPos));
 
-        if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 2) {
+        if (scrollPos >= pageBottom() - 2) {
             stopAutoScroll();
             return;
         }
-
         animationFrameId = requestAnimationFrame(step);
     }
 
-    function startAutoScroll() {
+    var startAutoScroll = function () {
         if (isAutoScrolling) return;
         isAutoScrolling = true;
-        step();
-    }
+        // scroll-behavior:smooth بالـ CSS بيخلّي سفاري يعيد الحركة كل إطار فما بيتحرك؛ نوقفه أثناء التمرير التلقائي
+        document.documentElement.style.scrollBehavior = 'auto';
+        scrollPos = window.scrollY;
+        lastTs = 0;
+        animationFrameId = requestAnimationFrame(step);
+    };
 
     function stopAutoScroll() {
         if (isAutoScrolling) {
             isAutoScrolling = false;
             cancelAnimationFrame(animationFrameId);
+            document.documentElement.style.scrollBehavior = '';
         }
     }
 
-    window.addEventListener('wheel', () => stopAutoScroll(), { passive: true });
-    window.addEventListener('touchstart', () => stopAutoScroll(), { passive: true });
+    // لو الضيف تدخّل (لمس/سحب/عجلة/كيبورد) بنوقف التمرير، ولو هدي وبطّل يتحرك كم ثانية بنكمل لحالنا
+    const RESUME_AFTER_MS = 1500;
+    let autoScrollWanted = false;     // بيصير true أول ما يبدأ التمرير التلقائي
+    let resumeTimer = null;
+    let touching = false;
+
+    const _startAuto = startAutoScroll;
+    startAutoScroll = function () { autoScrollWanted = true; _startAuto(); };
+
+    function canResume() {
+        if (!autoScrollWanted || isAutoScrolling || touching) return false;
+        if (document.body.classList.contains('modal-open')) return false;          // نافذة تأكيد الحضور مفتوحة
+        const ae = document.activeElement;
+        if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return false;      // الضيف عم يكتب
+        if (window.scrollY >= pageBottom() - 2) return false;                      // وصلنا لآخر الصفحة
+        return true;
+    }
+
+    function userInteracted() {
+        stopAutoScroll();
+        clearTimeout(resumeTimer);
+        resumeTimer = setTimeout(function tryResume() {
+            if (canResume()) _startAuto();
+            else if (autoScrollWanted && !isAutoScrolling && window.scrollY < pageBottom() - 2) {
+                resumeTimer = setTimeout(tryResume, 1000);                          // لسا مشغول، نعيد الفحص
+            }
+        }, RESUME_AFTER_MS);
+    }
+
+    window.addEventListener('wheel', userInteracted, { passive: true });
+    window.addEventListener('touchstart', () => { touching = true; userInteracted(); }, { passive: true });
+    window.addEventListener('touchmove', userInteracted, { passive: true });
+    window.addEventListener('touchend', () => { touching = false; userInteracted(); }, { passive: true });
+    window.addEventListener('touchcancel', () => { touching = false; userInteracted(); }, { passive: true });
+    // حركة الدفع بعد السحب (momentum) على الآيفون ما فيها أحداث لمس، بس فيها scroll
+    window.addEventListener('scroll', function () {
+        if (!isAutoScrolling && autoScrollWanted) userInteracted();
+    }, { passive: true });
     window.addEventListener('keydown', (e) => {
         if (['ArrowDown', 'ArrowUp', 'Space', 'PageDown', 'PageUp'].includes(e.code)) {
-            stopAutoScroll();
+            userInteracted();
         }
     });
 </script>
